@@ -1,0 +1,145 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# docker-compose.yml — Compliance RAG Stack
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# What does this file define?
+# It orchestrates TWO services that work together:
+#
+#   1. qdrant   — The vector database. Stores all compliance document chunks
+#                 as searchable dense + sparse vectors.
+#
+#   2. api      — Our FastAPI application. Reads from .env, connects to Qdrant,
+#                 and serves the REST API on port 8000.
+#
+# How to run:
+#   docker-compose up --build          # First time (builds the image)
+#   docker-compose up                  # Subsequent starts (uses cached image)
+#   docker-compose down                # Stop and remove containers
+#   docker-compose down -v             # Stop AND delete the Qdrant data volume
+#
+# Data persistence:
+#   Qdrant data is stored in ./qdrant_data on your host machine.
+#   This means re-starting the stack does NOT lose your indexed vectors.
+#   Only 'docker-compose down -v' would delete them.
+# ─────────────────────────────────────────────────────────────────────────────
+
+version: "3.9"
+
+services:
+
+  # ── Qdrant Vector Database ──────────────────────────────────────────────────
+  qdrant:
+    # Official Qdrant image — always use a pinned version in production
+    # to prevent surprise breaking changes from 'latest'
+    image: qdrant/qdrant:v1.9.4
+
+    container_name: compliance_qdrant
+
+    # Port mapping: host:container
+    # 6333 — Qdrant REST API (used by QdrantClient in our app)
+    # 6334 — Qdrant gRPC API (optional — useful for high-throughput production)
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+
+    # Volume: ./qdrant_data on the HOST maps to /qdrant/storage INSIDE the container
+    # This is the CRITICAL line for persistence:
+    # Without it, all vectors are lost when the container stops.
+    # With it, restarting the container restores all 50,000+ indexed chunks instantly.
+    volumes:
+      - ./qdrant_data:/qdrant/storage
+
+    # Resource limits: prevent Qdrant from consuming all available RAM
+    # Adjust based on your server's memory. 2GB is sufficient for ~500k vectors.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+    # Environment variables for Qdrant configuration
+    environment:
+      # Enable the Qdrant web dashboard (accessible at http://localhost:6333/dashboard)
+      QDRANT__SERVICE__ENABLE_DASHBOARD: "true"
+
+    # Restart policy: automatically restart if Qdrant crashes
+    restart: unless-stopped
+
+    # Health check: Docker will mark the container unhealthy if Qdrant is down
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+
+  # ── Compliance RAG API ────────────────────────────────────────────────────────
+  api:
+    # Build from our Dockerfile in the current directory
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: compliance_api
+
+    # Wait for Qdrant to be healthy before starting the API.
+    # Without this, the API might try to connect to Qdrant before it's ready
+    # and fail at startup with a connection error.
+    depends_on:
+      qdrant:
+        condition: service_healthy
+
+    # Port mapping: host port 8000 → container port 8000
+    # Access the API at: http://localhost:8000
+    # Access Swagger docs at: http://localhost:8000/docs
+    ports:
+      - "8000:8000"
+
+    # Volume mounts: keep documents and embedding cache outside the container
+    # so they persist across rebuilds and are easy to manage from the host.
+    volumes:
+      # PDF documents to ingest — add your compliance PDFs here
+      - ./documents:/app/documents
+
+      # Embedding cache — avoids re-paying OpenAI for the same embeddings
+      - ./embedding_cache:/app/.embedding_cache
+
+      # Mount app code for hot-reload during development
+      # Comment this out for production builds (use the baked-in code instead)
+      - ./app:/app/app
+
+    # Load environment variables from .env file
+    # The .env file is NEVER committed to git (add it to .gitignore)
+    env_file:
+      - .env
+
+    # Override the QDRANT_URL to point to the qdrant service by its
+    # Docker service name rather than localhost.
+    # Inside Docker's network, services reach each other by their service name.
+    # 'localhost' inside the api container refers to the API container itself,
+    # NOT the qdrant container — so we override it here.
+    environment:
+      QDRANT_URL: "http://qdrant:6333"
+
+    # Restart policy: restart the API on crash, but not on 'docker-compose down'
+    restart: unless-stopped
+
+    # The command here overrides the CMD in the Dockerfile.
+    # We add --reload for development: the server restarts automatically
+    # whenever you edit a .py file inside the mounted ./app folder.
+    # REMOVE --reload for production (it adds CPU overhead and disables workers>1)
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+    # Resource limits: prevent the API from consuming all CPU during heavy ingestion
+    deploy:
+      resources:
+        limits:
+          memory: 4G    # 4GB: needed for the cross-encoder model + embedding batch
+
+# ── Named Volumes ─────────────────────────────────────────────────────────────
+# We use bind mounts (./path:/container/path) above, not named volumes,
+# because bind mounts make data visible and manageable on the host filesystem.
+# Named volumes are listed here for completeness if you switch to them.
+volumes:
+  qdrant_storage:
+    driver: local
