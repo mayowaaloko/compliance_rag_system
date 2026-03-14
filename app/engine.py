@@ -38,11 +38,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import tiktoken
-from langchain_classic.retrievers.contextual_compression import (
-    ContextualCompressionRetriever,
-)
-from langchain_classic.retrievers.document_compressors import CrossEncoderReranker
-from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+import cohere
 from langchain_core.documents import Document
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import (
@@ -50,8 +46,8 @@ from langchain_core.runnables import (
     RunnableParallel,
     RunnablePassthrough,
 )
-from langchain_groq import ChatGroq
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_qdrant import QdrantVectorStore
 from qdrant_client import models as qm
 
@@ -84,13 +80,6 @@ llm = ChatOpenAI(
     api_key=settings.openai_api_key,
 )
 
-# llm = ChatGroq(
-#     model=settings.groq_model,
-#     temperature=settings.temperature,
-#     api_key=settings.groq_api_key,
-# )
-
-
 # Query rewriting LLM: OpenAI (used for multi-query expansion as in the notebook)
 # Note: ChatGroq could be used here for lower cost if preferred.
 query_llm = ChatGroq(
@@ -98,7 +87,6 @@ query_llm = ChatGroq(
     temperature=settings.temperature,
     api_key=settings.groq_api_key,
 )
-
 
 # Tokenizer for the context window budget calculation
 # We use gpt-4o's tokenizer — it works for all GPT-4 family models
@@ -247,50 +235,76 @@ def multi_query_retrieve(
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def build_reranker() -> CrossEncoderReranker:
-    """
-    What does this function return?
-    A CrossEncoderReranker that uses ms-marco-MiniLM-L-6-v2.
-
-    Why a cross-encoder for reranking?
-    Bi-encoders (used by Qdrant's vector search) encode the query and
-    each document SEPARATELY. Fast, but they miss cross-attention signals.
-
-    Cross-encoders read the (query, document) PAIR together — allowing
-    full attention between question and answer text. This gives much better
-    relevance scoring at the cost of speed.
-
-    The strategy: use the fast bi-encoder to narrow 10,000+ chunks down
-    to 20 candidates, then use the accurate cross-encoder on just those 20.
-    Best of both worlds: speed AND accuracy.
-
-    Why ms-marco-MiniLM-L-6-v2?
-    - Trained on MS MARCO, a large question-answering dataset
-    - 6-layer MiniLM: fast inference (≈20ms per pair on CPU)
-    - Strong performance on passage reranking tasks
-    """
-    model = HuggingFaceCrossEncoder(model_name="cross-encoder/ms-marco-MiniLM-L-6-v2")
-    return CrossEncoderReranker(model=model, top_n=settings.top_k_rerank)
-
-
-# Module-level singleton: download the model once at startup, reuse for all queries
-_reranker: Optional[CrossEncoderReranker] = None
-
-
-def get_reranker() -> CrossEncoderReranker:
+def cohere_rerank(
+    question: str,
+    candidates: List[Document],
+) -> List[Document]:
     """
     What does this function do?
-    Returns the module-level reranker singleton, initialising it on first call.
+    Sends the candidate chunks and the question to the Cohere Rerank API.
+    Cohere scores each (question, chunk) pair together and returns them
+    sorted from most to least relevant. We keep the top settings.top_k_rerank.
 
-    Why a singleton?
-    Downloading and loading a HuggingFace model takes several seconds.
-    We do this ONCE at startup, not on every request.
+    Why Cohere Rerank instead of a local cross-encoder?
+    The local HuggingFace cross-encoder (ms-marco-MiniLM) requires loading
+    PyTorch (~800MB RAM) into the container. Cohere Rerank is an API call —
+    no model weights, no GPU, no RAM spike. The quality is comparable or
+    better because Cohere's rerank-english-v3.0 was trained on a much larger
+    dataset than ms-marco-MiniLM.
+
+    Why rerank at all?
+    Qdrant's hybrid search retrieves 20+ candidates fast but ranks them with
+    a simple fusion score. The reranker reads each (question, chunk) pair
+    together with full cross-attention — much more accurate relevance scoring.
+    We narrow 20 candidates to 5 with the reranker.
+
+    Failure handling:
+    If the Cohere API call fails (network error, quota exhausted), we fall
+    back to returning the top-K candidates in their original retrieval order.
+    The system degrades gracefully rather than crashing.
     """
-    global _reranker
-    if _reranker is None:
-        print("[engine] Loading cross-encoder reranker (first request only)...")
-        _reranker = build_reranker()
-    return _reranker
+    if not candidates:
+        return []
+
+    try:
+        co = cohere.Client(api_key=settings.cohere_api_key)
+
+        # Cohere expects a list of plain strings — extract the text from Documents
+        docs_text = [doc.page_content for doc in candidates]
+
+        response = co.rerank(
+            model="rerank-english-v3.0",
+            query=question,
+            documents=docs_text,
+            top_n=settings.top_k_rerank,
+        )
+
+        # response.results contains RerankResponseResultsItem objects.
+        # Each has: .index (position in original list) and .relevance_score (0-1).
+        # We rebuild the Document list in reranked order, injecting the score
+        # into metadata so it appears in the compliance report citations.
+        reranked = []
+        for result in response.results:
+            doc = candidates[result.index]
+            # Attach the Cohere relevance score to the chunk metadata
+            doc.metadata["relevance_score"] = round(result.relevance_score, 4)
+            reranked.append(doc)
+
+        return reranked
+
+    except Exception as e:
+        print(f"[engine] Cohere rerank failed, falling back to retrieval order: {e}")
+        # Graceful degradation: return top-K in original retrieval order
+        return candidates[: settings.top_k_rerank]
+
+
+def get_reranker():
+    """
+    Kept for backwards compatibility with main.py lifespan.
+    Cohere rerank is stateless (API call) so there is nothing to initialise.
+    This function is now a no-op.
+    """
+    print("[engine] Reranker: Cohere API (stateless, no preload needed)")
 
 
 def retrieve_and_rerank(
@@ -320,13 +334,13 @@ def retrieve_and_rerank(
     if not candidates:
         return []
 
-    # Step 2: Cross-encoder reranks the pool from most to least relevant
-    reranker = get_reranker()
-    reranked = reranker.compress_documents(candidates, query=question)
+    # Step 2: Cohere reranks the candidate pool via API call.
+    # This replaces the local HuggingFace cross-encoder — same quality,
+    # no torch dependency, no RAM spike on startup.
+    reranked = cohere_rerank(question=question, candidates=candidates)
 
-    # Deduplicate reranked results by (filename, page) so the same page
-    # cannot occupy two slots in the final top-K. This can happen when the
-    # same chunk appears under both 'filename' and 'source' metadata keys.
+    # Deduplicate by (filename, page) — same chunk can appear under
+    # both 'filename' and 'source' metadata keys from different retrieval paths.
     seen_pages: set = set()
     deduped_reranked: List[Document] = []
     for doc in reranked:
@@ -342,11 +356,11 @@ def retrieve_and_rerank(
     )
 
     for i, doc in enumerate(deduped_reranked, 1):
+        import os as _os
+
         score = doc.metadata.get("relevance_score", 0.0)
         fname = doc.metadata.get("filename") or doc.metadata.get("source", "N/A")
         page = doc.metadata.get("page", "N/A")
-        import os as _os
-
         fname = _os.path.basename(fname) if fname != "N/A" else "N/A"
         print(f"  [{i}] score={score:.4f}  {fname} p.{page}")
 

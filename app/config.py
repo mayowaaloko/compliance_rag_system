@@ -63,6 +63,10 @@ class Settings(BaseSettings):
         ..., description="OpenAI API key for the LLM and embeddings"
     )
 
+    # Cohere: used for reranking retrieved chunks (API-based, no local model needed)
+    # Free tier: 1000 calls/month. Get key at https://cohere.com
+    cohere_api_key: str = Field(..., description="Cohere API key for reranking")
+
     # LangSmith: optional observability / tracing. Leave unset to disable.
     langsmith_api_key: Optional[str] = None
     langsmith_project: str = "compliance-rag-2026"

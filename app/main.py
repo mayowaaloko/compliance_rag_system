@@ -56,7 +56,7 @@ from app.database import (
     get_user_by_username,
     log_document_ingested,
 )
-from app.engine import get_reranker, run_compliance_query
+from app.engine import run_compliance_query
 from app.ingestion import chunk_documents, extract_all_documents, scan_compliance_docs
 from app.schemas import (
     ChatResponse,
@@ -166,9 +166,8 @@ async def lifespan(app: FastAPI):
     app.state.qdrant_store = qdrant_store
     print("[startup] Qdrant store ready.")
 
-    # Load the cross-encoder reranker into memory
-    get_reranker()
-    print("[startup] Reranker loaded.")
+    # Reranker is Cohere API — no model to preload, no RAM cost at startup
+    print("[startup] Reranker: Cohere API (ready)")
 
     print("[startup] Compliance RAG API ready to serve requests.")
 

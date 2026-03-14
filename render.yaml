@@ -44,6 +44,9 @@ services:
       - key: GROQ_API_KEY
         sync: false
 
+      - key: COHERE_API_KEY
+        sync: false
+
       - key: JWT_SECRET_KEY
         sync: false
 

@@ -13,6 +13,7 @@ langchain-huggingface
 langchain-openai
 langchain-qdrant
 psycopg2-binary
+cohere
 pydantic[email]
 pymupdf
 pymupdf4llm
