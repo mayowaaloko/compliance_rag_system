@@ -12,7 +12,7 @@ langchain-groq
 langchain-huggingface
 langchain-openai
 langchain-qdrant
-psycopg2
+psycopg2-binary
 pydantic[email]
 pymupdf
 pymupdf4llm
