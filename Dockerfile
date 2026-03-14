@@ -81,6 +81,9 @@ COPY --from=builder /opt/venv /opt/venv
 # Copy the application code
 COPY app/ ./app/
 
+# Copy the frontend UI so FastAPI can serve it at /
+COPY ui/ ./ui/
+
 # Create the documents and cache directories and set ownership
 # These directories are mounted as volumes in docker-compose.yml,
 # but we create them here as fallbacks for standalone container runs

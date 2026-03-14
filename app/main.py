@@ -37,8 +37,9 @@ from fastapi import (
     status,
 )
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.staticfiles import StaticFiles
 
 from app.auth import (
     create_access_token,
@@ -208,6 +209,21 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],              # Allow all headers including Authorization
 )
+
+# ── Serve the frontend UI ─────────────────────────────────────────────────────
+# Mount the ui/ folder so FastAPI serves index.html at the root URL.
+# This means your deployed Render URL (e.g. https://lexai.onrender.com) opens
+# the chat UI directly — no separate hosting needed for the frontend.
+#
+# IMPORTANT: This mount must come AFTER all API routes are registered,
+# otherwise the wildcard catch-all would intercept API requests.
+# We register it here (after middleware, before routes) using a path mount,
+# and add a root redirect below after all routes are defined.
+
+import os as _os
+_ui_dir = _os.path.join(_os.path.dirname(__file__), "..", "ui")
+if _os.path.isdir(_ui_dir):
+    app.mount("/ui", StaticFiles(directory=_ui_dir, html=True), name="ui")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -665,3 +681,17 @@ async def get_history(
         "messages": [m.model_dump() for m in messages],
         "count": len(messages),
     }
+
+
+# ── Root redirect → UI ────────────────────────────────────────────────────────
+# Visiting the bare domain (e.g. https://lexai.onrender.com) opens the chat UI.
+# We use FileResponse directly so it works whether ui/ is mounted or not.
+
+@app.get("/", include_in_schema=False)
+async def root():
+    """Serve the frontend UI at the root URL."""
+    import os as _os
+    ui_path = _os.path.join(_os.path.dirname(__file__), "..", "ui", "index.html")
+    if _os.path.isfile(ui_path):
+        return FileResponse(ui_path, media_type="text/html")
+    return {"message": "LexAI Compliance API", "docs": "/docs"}

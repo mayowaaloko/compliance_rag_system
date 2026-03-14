@@ -1,0 +1,122 @@
+# render.yaml — Render Deployment Blueprint
+# ─────────────────────────────────────────
+# This file tells Render exactly how to build and run your service.
+# Commit this file to your GitHub repo. Render reads it automatically
+# when you connect the repo.
+#
+# After deploying, your app is live at:
+#   https://lexai-api.onrender.com        ← API + UI
+#   https://lexai-api.onrender.com/docs   ← Swagger docs
+#   https://lexai-api.onrender.com/health ← Health check
+
+services:
+  - type: web
+    name: lexai-api
+
+    # Build from Docker — uses your Dockerfile directly
+    runtime: docker
+
+    # Render will auto-detect your Dockerfile in the repo root.
+    # If your Dockerfile is in a subfolder, add: dockerfilePath: ./path/Dockerfile
+    dockerfilePath: ./Dockerfile
+
+    # The port your app listens on (must match EXPOSE in Dockerfile)
+    # Render routes public traffic to this port automatically
+    dockerContext: .
+
+    # Render's health check — hits this URL to confirm the app is alive
+    # If it returns non-2xx three times, Render restarts the container
+    healthCheckPath: /health
+
+    # Plan: "starter" = $7/month, never sleeps, 512MB RAM
+    # "free" = sleeps after 15min inactivity (slow first request)
+    # For a compliance tool used professionally, use "starter"
+    plan: starter
+
+    # Environment variables — Render injects these into the container.
+    # Values marked sync: false must be filled in manually in the Render dashboard.
+    # NEVER put actual secret values in this file — this file is committed to git.
+    envVars:
+      # ── Required: fill these in Render dashboard ────────────────────────────
+      - key: OPENAI_API_KEY
+        sync: false
+
+      - key: GROQ_API_KEY
+        sync: false
+
+      - key: JWT_SECRET_KEY
+        sync: false
+
+      - key: QDRANT_URL
+        sync: false
+
+      - key: QDRANT_API_KEY
+        sync: false
+
+      - key: SUPABASE_URL
+        sync: false
+
+      - key: SUPABASE_ANON_KEY
+        sync: false
+
+      - key: DATABASE_URL
+        sync: false
+
+      # ── These have safe defaults — change if needed ─────────────────────────
+      - key: QDRANT_COLLECTION_NAME
+        value: compliance_docs
+
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+
+      - key: JWT_ALGORITHM
+        value: HS256
+
+      - key: JWT_EXPIRE_MINUTES
+        value: "480"
+
+      - key: EMBEDDING_MODEL
+        value: text-embedding-3-small
+
+      - key: EMBEDDING_PROVIDER
+        value: openai
+
+      - key: CHUNK_SIZE
+        value: "600"
+
+      - key: CHUNK_OVERLAP
+        value: "80"
+
+      - key: TOP_K_RETRIEVAL
+        value: "20"
+
+      - key: TOP_K_RERANK
+        value: "5"
+
+      - key: MAX_CONTEXT_TOKENS
+        value: "7000"
+
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "10"
+
+      - key: COMPLIANCE_DOCS_DIR
+        value: ./documents/
+
+      - key: EMBEDDING_CACHE_DIR
+        value: ./.embedding_cache
+
+      # CORS: allow all origins so the UI served from Render can call the API.
+      # Once deployed, replace * with your actual Render URL for tighter security:
+      # e.g. https://lexai-api.onrender.com
+      - key: CORS_ORIGINS
+        value: "*"
+
+      # Python settings
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+      - key: PYTHONDONTWRITEBYTECODE
+        value: "1"
