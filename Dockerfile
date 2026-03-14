@@ -64,9 +64,8 @@ FROM python:3.11-slim AS runtime
 # (libmupdf provides the underlying PDF rendering engine)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
-    libgl1-mesa-glx \
+    libgl1 \
     && rm -rf /var/lib/apt/lists/*
-
 # Create a non-root user for security
 # Running as root inside a container is a security anti-pattern:
 # if the container is compromised, the attacker has root access.
