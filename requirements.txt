@@ -1,6 +1,6 @@
 
 diskcache
-
+argon2-cffi
 fastapi
 fastembed
 ipykernel
