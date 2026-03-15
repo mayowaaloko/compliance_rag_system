@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>LexAI</title>
   <style>
     *,
@@ -43,6 +43,15 @@
       overflow: hidden;
     }
 
+    /* dvh = dynamic viewport height — excludes Android nav bar and iOS Safari chrome */
+    @supports (height: 100dvh) {
+
+      html,
+      body {
+        height: 100dvh;
+      }
+    }
+
     ::-webkit-scrollbar {
       width: 4px;
     }
@@ -55,6 +64,7 @@
     #shell {
       display: flex;
       height: 100vh;
+      height: 100dvh;
       position: relative;
     }
 
@@ -335,6 +345,7 @@
       align-items: center;
       justify-content: center;
       padding: 16px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     }
 
     .abox {
@@ -806,12 +817,14 @@
     /* ── INPUT ───────────────────────────────────────────────────────── */
     #inp {
       padding: 8px 16px 16px;
+      padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
       flex-shrink: 0;
     }
 
     @media (max-width:600px) {
       #inp {
         padding: 8px 10px 12px;
+        padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
       }
     }
 
@@ -1268,9 +1281,9 @@
       <div class="wsub">Ask compliance questions about your indexed Nigerian regulatory documents.</div>
       <div class="exs">
         <button class="ex" onclick="useEx(this)">Under the NDPR 2019, when must a Data Controller file an annual Data Protection Audit?</button>
-        <button class="ex" onclick="useEx(this)">What conditions must be met before transferring personal data outside Nigeria?</button>
-        <button class="ex" onclick="useEx(this)">Under the Nigerian Labour Act, what is the maximum working hours per week?</button>
-        <button class="ex" onclick="useEx(this)">What are the penalties for unlawful processing of personal data under the NDPR?</button>
+        <button class="ex" onclick="useEx(this)">What information must a company disclose when identifying and registering persons with significant control</button>
+        <button class="ex" onclick="useEx(this)">What powers do tax authorities have in assessing, collecting, and enforcing federal tax liabilities?</button>
+        <button class="ex" onclick="useEx(this)">What legal requirements must employers follow regarding wages, working hours, and termination of employment for employees</button>
       </div>
     </div></div>`;
     }
