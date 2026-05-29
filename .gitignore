@@ -214,7 +214,7 @@ __marimo__/
 .embedding_cache/
 
 # Folders
-documents/
+
 frontend/
 api.py
 compliance_rag_notebook.ipynb
@@ -223,7 +223,7 @@ compliance_rag_notebook.ipynb
 .embedding_cache/       # On-disk embedding cache (large, regeneratable)
 qdrant_data/            # Qdrant persistent storage (large, regeneratable)
 embedding_cache/        # Docker volume binding
-documents/              # PDFs should not be committed (client confidential)
+
 
 
 .supabase_schema.sql/              # Supabase local development files
