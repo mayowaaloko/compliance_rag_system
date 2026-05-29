@@ -38,7 +38,6 @@ from qdrant_client import models as qm
 
 from app.config import settings
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Embedding Models
 # ─────────────────────────────────────────────────────────────────────────────
@@ -281,6 +280,7 @@ def build_qdrant_store(chunks: List[Document]) -> QdrantVectorStore:
             retrieval_mode=RetrievalMode.HYBRID,
             timeout=120,
             batch_size=64,
+            force_recreate=True,
         )
 
         # Fetch updated stats after indexing
@@ -309,6 +309,7 @@ def build_qdrant_store(chunks: List[Document]) -> QdrantVectorStore:
             api_key=settings.qdrant_api_key,
             retrieval_mode=RetrievalMode.HYBRID,
             timeout=60,
+            vector_name="dense",
         )
 
         client = get_qdrant_client()
