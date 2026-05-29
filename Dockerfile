@@ -82,6 +82,7 @@ COPY app/ ./app/
 
 # Copy the frontend UI so FastAPI can serve it at /
 COPY ui/ ./ui/
+COPY documents/ ./documents/
 
 # Create the documents and cache directories and set ownership
 # These directories are mounted as volumes in docker-compose.yml,

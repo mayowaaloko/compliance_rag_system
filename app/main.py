@@ -70,7 +70,6 @@ from app.schemas import (
 )
 from app.vector_store import build_qdrant_store, ensure_collection, get_qdrant_client
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Application State
 # ─────────────────────────────────────────────────────────────────────────────
@@ -145,8 +144,9 @@ async def lifespan(app: FastAPI):
 
     Startup tasks:
         1. ensure_collection() — idempotent: creates Qdrant collection if needed
-        2. build_qdrant_store([]) — connect to the existing collection
-        3. get_reranker() — download the cross-encoder model (once, at startup)
+        2. Detect empty collection — if 0 points, run full ingestion pipeline
+        3. build_qdrant_store() — connect to the existing (or freshly indexed) collection
+        4. get_reranker() — download the cross-encoder model (once, at startup)
 
     Why initialise at startup and not per-request?
     - Qdrant connection: creating a client per request adds ~50ms overhead
@@ -161,8 +161,42 @@ async def lifespan(app: FastAPI):
     # Ensure the vector store collection exists
     ensure_collection()
 
-    # Connect to the existing collection for query-time use
-    qdrant_store = build_qdrant_store(chunks=[])
+    # Check if the collection is empty (e.g. new cluster after old one was deleted)
+    client = get_qdrant_client()
+    info = client.get_collection(settings.qdrant_collection_name)
+
+    if info.points_count == 0:
+        print("[startup] Collection is empty — running initial document ingestion...")
+
+        # Scan the documents folder for PDFs
+        records = scan_compliance_docs()
+
+        # Filter to only new (not-yet-indexed) documents
+        new_records = [r for r in records if not r.already_indexed]
+
+        if new_records:
+            print(f"[startup] Found {len(new_records)} new document(s) to index.")
+
+            # Extract text from PDFs → one Document per page
+            raw_pages = extract_all_documents(new_records)
+
+            # Split pages into overlapping chunks
+            chunks = chunk_documents(raw_pages)
+
+            if chunks:
+                # Index chunks into Qdrant (dense + sparse hybrid vectors)
+                qdrant_store = build_qdrant_store(chunks=chunks)
+                print(f"[startup] Indexed {len(chunks)} chunks into Qdrant.")
+            else:
+                print("[startup] No chunks produced from documents.")
+                qdrant_store = build_qdrant_store(chunks=[])
+        else:
+            print("[startup] No new documents found in compliance_docs_dir.")
+            qdrant_store = build_qdrant_store(chunks=[])
+    else:
+        print(f"[startup] Collection has {info.points_count} points. Connecting...")
+        qdrant_store = build_qdrant_store(chunks=[])
+
     app.state.qdrant_store = qdrant_store
     print("[startup] Qdrant store ready.")
 
@@ -188,8 +222,8 @@ app = FastAPI(
         "Powered by OpenAI, Qdrant hybrid search, and cross-encoder reranking."
     ),
     version="1.0.0",
-    docs_url="/docs",       # Swagger UI
-    redoc_url="/redoc",     # ReDoc UI
+    docs_url="/docs",  # Swagger UI
+    redoc_url="/redoc",  # ReDoc UI
     lifespan=lifespan,
 )
 
@@ -204,9 +238,9 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list(),
-    allow_credentials=True,           # Allow cookies and Auth headers
+    allow_credentials=True,  # Allow cookies and Auth headers
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],              # Allow all headers including Authorization
+    allow_headers=["*"],  # Allow all headers including Authorization
 )
 
 # ── Serve the frontend UI ─────────────────────────────────────────────────────
@@ -220,6 +254,7 @@ app.add_middleware(
 # and add a root redirect below after all routes are defined.
 
 import os as _os
+
 _ui_dir = _os.path.join(_os.path.dirname(__file__), "..", "ui")
 if _os.path.isdir(_ui_dir):
     app.mount("/ui", StaticFiles(directory=_ui_dir, html=True), name="ui")
@@ -231,6 +266,7 @@ if _os.path.isdir(_ui_dir):
 
 
 # ── Health Check ──────────────────────────────────────────────────────────────
+
 
 @app.get(
     "/health",
@@ -274,6 +310,7 @@ async def health_check() -> HealthResponse:
 
 
 # ── Auth: Register ─────────────────────────────────────────────────────────────
+
 
 @app.post(
     "/auth/register",
@@ -328,6 +365,7 @@ async def register(user_data: UserCreate) -> dict:
 
 # ── Auth: Login ───────────────────────────────────────────────────────────────
 
+
 @app.post(
     "/auth/token",
     response_model=TokenResponse,
@@ -369,7 +407,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()) -> TokenRespon
     # Create a JWT containing: username (as 'sub'), user_id, and role
     access_token = create_access_token(
         data={
-            "sub": user.username,      # 'sub' = subject — standard JWT claim
+            "sub": user.username,  # 'sub' = subject — standard JWT claim
             "user_id": user.user_id,
             "role": user.role,
         }
@@ -385,6 +423,7 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()) -> TokenRespon
 
 
 # ── Ingest Documents ──────────────────────────────────────────────────────────
+
 
 @app.post(
     "/ingest",
@@ -533,7 +572,9 @@ async def upload_and_ingest(
     records = scan_compliance_docs()
 
     # Find the record that matches the uploaded file
-    target_records = [r for r in records if r.filename == file.filename and not r.already_indexed]
+    target_records = [
+        r for r in records if r.filename == file.filename and not r.already_indexed
+    ]
 
     if not target_records:
         return {
@@ -568,6 +609,7 @@ async def upload_and_ingest(
 
 
 # ── Query ─────────────────────────────────────────────────────────────────────
+
 
 @app.post(
     "/query",
@@ -634,6 +676,7 @@ async def query(
 
 # ── Document Library ──────────────────────────────────────────────────────────
 
+
 @app.get(
     "/documents",
     summary="List all indexed documents",
@@ -655,6 +698,7 @@ async def list_documents(
 
 
 # ── Session History ───────────────────────────────────────────────────────────
+
 
 @app.get(
     "/history",
@@ -686,10 +730,12 @@ async def get_history(
 # Visiting the bare domain (e.g. https://lexai.onrender.com) opens the chat UI.
 # We use FileResponse directly so it works whether ui/ is mounted or not.
 
+
 @app.get("/", include_in_schema=False)
 async def root():
     """Serve the frontend UI at the root URL."""
     import os as _os
+
     ui_path = _os.path.join(_os.path.dirname(__file__), "..", "ui", "index.html")
     if _os.path.isfile(ui_path):
         return FileResponse(ui_path, media_type="text/html")
