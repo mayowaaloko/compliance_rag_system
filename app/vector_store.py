@@ -310,6 +310,7 @@ def build_qdrant_store(chunks: List[Document]) -> QdrantVectorStore:
             retrieval_mode=RetrievalMode.HYBRID,
             timeout=60,
             vector_name="dense",
+            RetrievalMode=RetrievalMode.DENSE,
         )
 
         client = get_qdrant_client()
