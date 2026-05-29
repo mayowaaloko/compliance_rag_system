@@ -283,7 +283,7 @@ def build_qdrant_store(chunks: List[Document]) -> QdrantVectorStore:
             force_recreate=True,
         )
 
-        # Fetch updated stats after indexing
+        # Fetch updated stats after indexings
         client = get_qdrant_client()
         info = client.get_collection(settings.qdrant_collection_name)
         elapsed = time.time() - start
