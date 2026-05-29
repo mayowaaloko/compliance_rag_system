@@ -137,7 +137,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 
 def decode_token(token: str) -> TokenData:
     """
-    What does this function do?
+    What does this function does?
     Decodes a JWT token and returns the embedded claims as a TokenData object.
 
     Raises HTTPException if:
